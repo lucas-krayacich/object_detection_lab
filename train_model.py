@@ -15,46 +15,54 @@ from torchvision.datasets import MNIST
 from torch.utils.data import DataLoader
 from torch.optim import lr_scheduler
 from torchvision.models import resnet18
-#arg parse
+import argparse
 
 
-def train(n_epochs, optimizer, model, loss_fn, train_loader, scheduler, device):
-    print('training...')
-    model.train() #keep track of gradient for backtracking
+def train(modified_model, num_epochs, criterion, optimizer, trainloader, savepath):
+    print("Training...")
+    epoch_train = []
     losses_train = []
+    starting_time = datetime.datetime.now().strftime("%H:%M:%S")
+    print(f"Time at start of training is: {starting_time}")
 
-    for epoch in range(1, n_epochs+1):
-        print('epoch ', epoch)
-        loss_train = 0.0
-        for imgs,lbls in train_loader:
-            imgs = imgs.to(device=device)
+    for epoch in range(num_epochs):  # loop over the dataset multiple times
+        running_loss = 0.0
+        batch_num = 0
+        for i, data in enumerate(trainloader, 0):
+            # get the inputs; data is a list of [inputs, labels]
+            inputs, labels = data
 
-            batch_size = imgs.size(0)  # Get the batch size
-            imgs = imgs.view(batch_size, -1)  # Reshape to (batch_size, num_features)
-
-            outputs = model(imgs)
-            loss = loss_fn(outputs, imgs)
+            # zero the parameter gradients
             optimizer.zero_grad()
+
+            # forward + backward + optimize
+            outputs = modified_model(inputs)
+            loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            loss_train += loss.item()
+            batch_num += 1
+            running_loss += loss.item()
+            # print statistics
 
-        scheduler.step(loss_train)
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        print(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss/batch_num:.3f}, Time: {timestamp}")
+        #Collect data to plot after tests are done
+        losses_train.append(running_loss/batch_num)
+        epoch_train.append(epoch + 1)
 
-        losses_train += [loss_train/len(train_loader)]
+    plt.figure()
+    plt.plot(epoch_train, losses_train)
+    plt.xlabel('Epoch')
+    plt.ylabel('Training Loss')
+    plt.title('Training Loss vs Epoch')
+    plt.savefig("./modified_loss_fig")
+    plt.close()
 
-        print('{} Epoch {}, Training loss {}'.format(
-            datetime.datetime.now(), epoch, loss_train/len(train_loader)))
-        plt.figure()
-        plt.plot(range(1, epoch+1), losses_train)
-        plt.xlabel('Epoch')
-        plt.ylabel('Training Loss')
-        plt.title('Training Loss vs Epoch')
-        plt.savefig(args.lossgraph)
-        plt.close()
+    ending_time = datetime.datetime.now().strftime("%H:%M:%S")
+    print(f"Time at end of training is: {ending_time}")
 
-        save_path = args.savepath
-        torch.save(model.state_dict(), save_path)
+    PATH = savepath
+    torch.save(modified_model.state_dict(), PATH)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train a model')
