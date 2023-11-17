@@ -78,7 +78,7 @@ if __name__ == "__main__":
     transform = transforms.Compose(
         [transforms.ToTensor(),
          transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-    train_set =
+    train_set = # idk yet
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
 
     train(args.epochs, optimizer, model, loss_fn, train_loader, scheduler, device)
