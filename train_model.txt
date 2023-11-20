@@ -1,0 +1,1 @@
+python train_model.py -i ./data/Kitti8 -e 2 -b 8 -p ./modified_loss_fig -s ./weights_from_training
