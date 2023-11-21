@@ -1,245 +1,117 @@
-import argparse
-import datetime
-import torch
-import sys
-import numpy as np
-from KittiDataset import KittiDataset
-from torch.utils.data import DataLoader, Dataset
-from KittiAnchors import Anchors
-import cv2
-from PIL import Image
-import torch.nn.functional as F
-import torch.nn as nn
 import os
-
-import torch.optim as optim
-from torchsummary import summary
-import matplotlib.pyplot as plt
-import torchvision.transforms as transforms
-from torchvision.datasets import MNIST
-from torch.utils.data import DataLoader
-from torch.optim import lr_scheduler
-from torchvision.models import resnet18
+import torch
 import argparse
-import KittiAnchors
+from PIL import Image
+from datetime import datetime
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+from torchvision import transforms
+from torch.optim.lr_scheduler import StepLR
+from torch.utils.data import DataLoader, Dataset
+from torchvision.models import resnet18
 
-#  input
-def resize_dataset(dataset, target_size_x, target_size_y):
-    transform = transforms.Compose([
-        transforms.Resize((target_size_x, target_size_y)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ])
+class CustomDataset(Dataset):
 
-    resized_dataset = []
-
-    for i in range(len(dataset)):
-        sample, label = dataset[i]
-
-        # If the sample is a NumPy array, convert it to a PIL Image
-        if isinstance(sample, np.ndarray):
-            sample = Image.fromarray(sample)
-
-        # Check if the sample is already a tensor
-        if not isinstance(sample, torch.Tensor):
-            sample = transform(sample)
-
-        resized_dataset.append((sample, label))
-
-    return resized_dataset
-
-def load_labels(labels_path):
-    labels_list = []
-    class_names_list = []
-
-    with open(labels_path, 'r') as file:
-        for line in file:
-            line = line.strip().split()
-            label = int(line[1])  # Assuming the label is an integer
-            class_name = line[2]
-
-            labels_list.append(label)
-            class_names_list.append(class_name)
-
-    labels_tensor = torch.tensor(labels_list, dtype=torch.long)
-    class_names_tensor = torch.tensor(class_names_list, dtype=torch.str)
-
-    return labels_tensor, class_names_tensor
-
-class KittiCustomDataset(Dataset):
     def __init__(self, directory, transform=None):
         self.directory = directory
         self.transform = transform
         self.labels = []
 
-        with open(os.path.join("./data/Kitti8_ROIs/train", 'labels.txt'), 'r') as file:
+        # Read the labels.txt file
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        with open(os.path.join(directory, 'labels.txt'), 'r') as file:
             for line in file:
                 image_file, label, _ = line.strip().split()
-                self.labels.append(("00000" + image_file[0] + ".png", int(label)))
+                self.labels.append((image_file, int(label)))
 
     def __len__(self):
         return len(self.labels)
 
-    def __getitem__(self, i):
-        image_file, label = self.labels[i]
+
+
+    def __getitem__(self, idx):
+
+        image_file, label = self.labels[idx]
         image_path = os.path.join(self.directory, image_file)
-        image = Image.open(image_path).convert("RGB")
+        image = Image.open(image_path).convert('RGB')
 
         if self.transform:
             image = self.transform(image)
 
         return image, label
 
-def train(modified_model, num_epochs, criterion, optimizer, trainloader, savepath):
-    print("Training...")
-    epoch_train = []
-    losses_train = []
-    starting_time = datetime.datetime.now().strftime("%H:%M:%S")
-    print(f"Time at start of training is: {starting_time}")
-    labels_path = './data/Kitti8_ROIs/train/labels.txt'
 
-    for epoch in range(num_epochs):  # loop over the dataset multiple times
-        running_loss = 0.0
-        batch_num = 0
-        for i, data in enumerate(trainloader, 0):
-            # get the inputs; data is a list of [inputs, labels]
+def train(train_set, batch_size, num_epochs, pth, model):
+    device = torch.device('cpu')
+    print('using CPU')
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+    model.fc = torch.nn.Linear(model.fc.in_features, 2)
+    model.to(device)
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0001)
+    # scheduler = StepLR(optimizer, step_size=5, gamma=0.01)
+    training_loss = []
+    #changed
+    all_pred_labels = []
+    all_true_labels = []
+
+    for epoch in range(num_epochs):
+        model.train()
+        batch_loss = 0
+
+        for data in train_loader:
             inputs, labels = data
-            print(inputs.size())
-            # use YODA labels - not kitti labels
-            #print(inputs)
-            print("-------------------------------")
-            print(labels)
-            # Create an instance of the Anchors class
-            anchors = Anchors()
-            for image in inputs:
-                # Calculate anchor centers for a 4x12 grid
-                anchor_centers = anchors.calc_anchor_centers(image.shape[:2], Anchors.grid)
-                # Get anchor ROIs
-                anchor_ROIs, anchor_boxes = anchors.get_anchor_ROIs(image, anchor_centers, Anchors.shapes)
-                ###################################################
-                #plt.figure(figsize=(12, 4))
-                #plt.subplot(1, 5, 1)
-                #plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-                #plt.title('Original Image')
-                ###################################################
-                #print("Show")
-                #plt.show()
-                for region in enumerate(anchor_ROIs, 0):
-                    print(region)
-                    anchor_inputs = anchor_ROIs[region]
-                    # anchor each input into 48
-                    # run model on each anchor zone
-                    # zero the parameter gradients
-                    plt.subplot(1, 5, i + 2)
-                    plt.imshow(cv2.cvtColor(anchor_ROIs[i], cv2.COLOR_BGR2RGB))
-                    plt.title(f'Anchor {i + 1}')
+            inputs, labels = inputs.to(device), labels.to(device)
 
-                    optimizer.zero_grad()
+            optimizer.zero_grad()
+            #changed
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs, 1)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            # changed
+            all_true_labels.extend(labels.cpu().numpy())
+            all_pred_labels.extend(predicted.cpu().numpy())
+            optimizer.step()
+            batch_loss += loss.item()
+        epoch_loss = batch_loss / len(train_loader)
+        current_time = datetime.now().strftime('%H:%M:%S')  # Get current timestamp
+        print(f'Current Time: {current_time}, Epoch {epoch + 1} out of {num_epochs}, Loss: {epoch_loss}')
+        training_loss.append(epoch_loss)
+        # scheduler.step()
+    conf_matrix = confusion_matrix(all_true_labels, all_pred_labels)
+    plt.figure(figsize=(10, 5))
+    plt.plot(training_loss, label="Total Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Loss Graph")
+    plt.legend()
 
-                    # forward + backward + optimize
-                    outputs = modified_model(anchor_inputs)
-                    loss = criterion(outputs, labels[region])
-                    loss.backward()
-                    optimizer.step()
-                    batch_num += 1
-                    running_loss += loss.item()
-                    # print statistics
+    plt.figure(figsize=(8,8))
+    plt.imshow(conf_matrix, interpolation='nearest', cmap=plt.cm.Blues)
+    plt.title('Confusion Matrix')
+    plt.show()
+    torch.save(model.state_dict(), pth)
 
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-        print(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss/batch_num:.3f}, Time: {timestamp}")
-        #Collect data to plot after tests are done
-        losses_train.append(running_loss/batch_num)
-        epoch_train.append(epoch + 1)
-
-    plt.figure()
-    plt.plot(epoch_train, losses_train)
-    plt.xlabel('Epoch')
-    plt.ylabel('Training Loss')
-    plt.title('Training Loss vs Epoch')
-    plt.savefig("./modified_loss_fig")
-    plt.close()
-
-    ending_time = datetime.datetime.now().strftime("%H:%M:%S")
-    print(f"Time at end of training is: {ending_time}")
-
-    PATH = savepath
-    torch.save(modified_model.state_dict(), PATH)
-
-
-class CustomDataset(Dataset):
-    def __init__(self, data_path, labels_path, transform=None):
-        self.data = KittiDataset(dir=data_path, transform=transform)
-        self.labels = self.load_labels(labels_path)
-        self.transform = transform
-
-    def load_labels(path):
-        labels_list = []
-        class_names_list = []
-
-        with open(path, 'r') as file:
-            for line in file:
-                line = line.strip().split()
-                label = int(line[1])  # Assuming the label is an integer
-                class_name = line[2]
-
-                labels_list.append(label)
-                class_names_list.append(class_name)
-
-        labels_tensor = torch.tensor(labels_list, dtype=torch.int) #used to be 'long'
-        class_names_tensor = torch.tensor(class_names_list, dtype=torch.str)
-
-        return labels_tensor, class_names_tensor
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, index):
-        sample = self.data[index]
-        label = self.labels[index]
-
-        if self.transform:
-            sample = self.transform(sample)
-
-        return sample, label
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train a model')
-
-    # Add arguments for -z, -e, -b, -s, and -p
-
-    parser.add_argument('-i', metavar='input_dir', type=str, help='input dir (./)')
-    parser.add_argument('-e', "--epochs", type=int, default=50, help='Value for e')
-    parser.add_argument('-b', "--batch_size", type=int, default=2048, help='Value for b')
-    parser.add_argument('-s', "--savepath", type=str, default='MLP.8.pth', help='Value for s')
-    parser.add_argument('-p', "--lossgraph", type=str, default='loss.MLP.8.png', help='Value for p')
-
+    parser = argparse.ArgumentParser(description="Args for train")
+    parser.add_argument("-train_set", required=True, default="/datasets/COCO100/", help="Path to the content images directory")
+    parser.add_argument("-e", type=int, default=20, help="Number of training epochs")
+    parser.add_argument("-b", type=int, default=32, help="Batch size for training")
+    parser.add_argument("-s", required=True, help="Path to save the decoder model")
+    parser.add_argument("-cuda", choices=("Y", "N"), default="N", help="Use CUDA for training (Y/N)")
     args = parser.parse_args()
-    model = resnet18()
-    batch_size = args.batch_size
-    device = torch.device("cpu")
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-    loss_fn = torch.nn.MSELoss()
-    scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
+    transform = transforms.Compose((
+        transforms.Resize((224, 224)),
+        # transforms.RandomHorizontalFlip(), # Random horizontal flip
+        # transforms.RandomRotation(15), # Random rotation
+        transforms.ToTensor(),
+    ))
 
-    # set the x and y values that we want the images to be at
-    desired_y = 1242
-    desired_x = 375
-
-    #Create the transform and load the train set
-    train_transform = transforms.Compose(
-        [transforms.Resize((desired_x, desired_y)),
-         transforms.ToTensor(),
-         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-    train_set = KittiCustomDataset(args.i, train_transform)
-    #train_set = KittiDataset(args.i, training=True, transform=train_transform)
-
-    #Resize the train set to make sure that all of the images are uniform
-    #print("Resizing...")
-    #resized_train_set = resize_dataset(train_set, desired_x, desired_y)
-    #print("Resizing Finished.")
-
-    #Link the resized train set to the train loader
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=args.batch_size, shuffle=False)
-
-    train(num_epochs=args.epochs, optimizer=optimizer, modified_model=model, criterion=loss_fn, trainloader=train_loader, savepath=args.savepath)
-
-
+    train_set = CustomDataset(directory=args.train_set, transform=transform)
+    resnet_model = resnet18(weights=None)
+    # train_set, batch_size, num_epochs, cuda
+    train(train_set, args.b, args.e, args.s, resnet_model)

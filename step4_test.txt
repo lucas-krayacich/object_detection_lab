@@ -1,0 +1,1 @@
+python yoda_model.py -b 2 -w ./model_weights.pth -test_set ./data/Kitti8/

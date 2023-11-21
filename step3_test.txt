@@ -1,0 +1,1 @@
+python test_model.py -b 48 -w ./model_weights.pth -test_set ./data/Kitti8_ROIs/test/

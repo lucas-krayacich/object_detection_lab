@@ -8,7 +8,7 @@ from KittiDataset import KittiDataset
 from KittiAnchors import Anchors
 
 save_ROIs = True
-max_ROIs = 10
+max_ROIs = 200
 
 
 def strip_ROIs(class_ID, label_list):

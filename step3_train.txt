@@ -1,0 +1,1 @@
+python train_model.py -e 20 -b 48 -s ./model_weights.pth -train_set ./data/Kitti8_ROIs/train/
